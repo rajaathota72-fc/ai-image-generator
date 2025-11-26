@@ -1,88 +1,92 @@
 # ai_processor.py
 import base64
+import io
 import os
-from openai import OpenAI
+from PIL import Image
+from google import genai
+from google.genai import types
 from dotenv import load_dotenv
 
 load_dotenv()
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
-
-def extract_between(text, start, end):
-    """Utility: safely extract content between two markers."""
-    try:
-        return text.split(start)[1].split(end)[0].strip()
-    except:
-        return ""
+client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 
 def generate_profession_image(image_stream, goal):
     """
-    Robust version:
-    - GPT-4o extracts identity (gender/ethnicity/face)
-    - NO JSON (avoids JSONDecodeError)
-    - Builds stable prompt
-    - gpt-image-1 generates final future-goal portrait
+    Image → Image using Gemini 3 Pro Image Preview
+    with correct Part(text=...) and Part(inline_data=Blob)
     """
 
-    # Convert webcam image to base64 data URI
-    img_b64 = base64.b64encode(image_stream.getvalue()).decode("utf-8")
-    data_uri = f"data:image/png;base64,{img_b64}"
+    # Load camera image
+    input_img = Image.open(io.BytesIO(image_stream.getvalue()))
 
-    # STEP 1 — Extract identity in a structured, non-JSON format
-    identity_response = client.chat.completions.create(
-        model="gpt-4o",
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "Extract identity of the student. "
-                    "Return the result in THIS EXACT FORMAT:\n\n"
-                    "GENDER: <male/female/other>\n"
-                    "ETHNICITY: <ethnicity>\n"
-                    "FACE: <detailed face description>\n\n"
-                    "DO NOT add anything else."
-                )
-            },
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": "Analyze this student's face."},
-                    {"type": "image_url", "image_url": {"url": data_uri}},
-                ],
-            },
-        ],
+    # Convert to PNG bytes
+    buf = io.BytesIO()
+    input_img.save(buf, "PNG")
+    img_bytes = buf.getvalue()
+
+    # Correct image input format
+    image_part = types.Part(
+        inline_data=types.Blob(
+            mime_type="image/png",
+            data=img_bytes
+        )
     )
 
-    identity_text = identity_response.choices[0].message.content
+    # Profession transformation prompt
+    prompt = f"""
+    Transform this SAME person into a future {goal} in India.
 
-    # Extract sections safely
-    gender = extract_between(identity_text, "GENDER:", "\n")
-    ethnicity = extract_between(identity_text, "ETHNICITY:", "\n")
-    face_desc = extract_between(identity_text, "FACE:", "\n")
+    PRESERVE:
+    - facial identity exactly
+    - beard, glasses, hairstyle
+    - skin tone
+    - age and gender
 
-    # STEP 2 — Build final prompt with identity locked
-    dalle_prompt = (
-        f"Photorealistic portrait of the SAME PERSON described below. "
-        f"Do NOT change gender, ethnicity or identity.\n\n"
-        f"--- LOCKED IDENTITY ---\n"
-        f"Gender: {gender}\n"
-        f"Ethnicity: {ethnicity}\n"
-        f"Facial Identity: {face_desc}\n\n"
-        f"--- FUTURE ROLE ---\n"
-        f"The person is shown as a future {goal} in India.\n"
-        f"Clothing: authentic Indian {goal} professional uniform.\n"
-        f"Background: realistic Indian workplace.\n"
-        f"Lighting: soft Indian natural lighting.\n"
-        f"Ultra-realistic portrait.\n"
+    CHANGE ONLY:
+    - Clothing → authentic Indian {goal} outfit
+    - Background → realistic Indian professional environment
+    """
+
+    contents = [
+        types.Content(
+            role="user",
+            parts=[
+                types.Part(text=prompt),   # ✔ FIXED HERE
+                image_part
+            ]
+        )
+    ]
+
+    config = types.GenerateContentConfig(
+        response_modalities=["IMAGE"],
+        image_config=types.ImageConfig(image_size="1K")
     )
 
-    # STEP 3 — Generate final portrait
-    img_result = client.images.generate(
-        model="gpt-image-1",
-        prompt=dalle_prompt,
-        size="1024x1024"
-    )
+    output_img_bytes = None
 
-    out_b64 = img_result.data[0].b64_json
-    return base64.b64decode(out_b64)
+    # Stream model output
+    for chunk in client.models.generate_content_stream(
+        model="gemini-3-pro-image-preview",
+        contents=contents,
+        config=config
+    ):
+        if (
+            chunk.candidates
+            and chunk.candidates[0].content
+            and chunk.candidates[0].content.parts
+        ):
+            part = chunk.candidates[0].content.parts[0]
+
+            if part.inline_data and part.inline_data.data:
+                output_img_bytes = part.inline_data.data
+
+    if not output_img_bytes:
+        raise Exception("Gemini did not return an image. Possibly quota or model issue.")
+
+    # Convert to valid PNG
+    final_img = Image.open(io.BytesIO(output_img_bytes))
+    final_buf = io.BytesIO()
+    final_img.save(final_buf, "PNG")
+
+    return final_buf.getvalue()
