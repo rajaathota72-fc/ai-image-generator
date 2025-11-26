@@ -1,8 +1,6 @@
 streamlit
-pillow
-boto3
-pymongo
+Pillow
 python-dotenv
-openai
-twilio
-reportlab
+pymongo
+google-genai
+requests
