@@ -38,7 +38,7 @@ with left:
 
     goal = st.selectbox(
         "Future Goal *",
-        ["Astronaut","ISRO Scientist","Doctor", "IAS Officer", "Pilot", "Engineer", "Scientist", "Lawyer", "Army Officer"]
+        ["Astronaut","ISRO Scientist","A Person in Space suit","NASA Scientist","Doctor", "IAS Officer", "Pilot", "Engineer", "Scientist", "Lawyer", "Army Officer"]
     )
 
 
