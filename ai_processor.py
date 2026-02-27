@@ -67,7 +67,7 @@ def generate_profession_image(image_stream, goal):
 
     # Stream model output
     for chunk in client.models.generate_content_stream(
-        model="gemini-3-pro-image-preview",
+        model="gemini-3.1-flash-image-preview",
         contents=contents,
         config=config
     ):
